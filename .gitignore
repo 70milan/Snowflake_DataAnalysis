@@ -5,3 +5,10 @@ read.txt
 .venv
 
 downloads/
+
+all_items.json
+
+genre_by_artists.json
+
+.cache/
+
