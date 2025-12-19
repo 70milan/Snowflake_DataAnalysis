@@ -29,11 +29,12 @@ SHOW_INITIAL_ROWS = FALSE; -- Set to FALSE because we just loaded it
 
 -- Create a task to refresh the SILVER_BORDER_FLAT table from the BRONZE_BORDER table every 15 minutes
 CREATE OR REPLACE TASK ELT_PROJECT.GOVDATA.REFRESH_SILVER_FLAT_TASK
-    WAREHOUSE = XS_WH
-    SCHEDULE = '15 MINUTE'
+    WAREHOUSE = COMPUTE_WH
+    SCHEDULE = '11000 MINUTE'
 AS
 MERGE INTO ELT_PROJECT.GOVDATA.SILVER_BORDER_FLAT AS target
 USING (
+    -- We define exactly what we are bringing in here
     SELECT
       f.value[8]::STRING      AS PORT_NAME,
       f.value[9]::STRING      AS STATE_NAME,
@@ -43,7 +44,8 @@ USING (
       f.value[13]::STRING     AS MEASURE,
       f.value[14]::INTEGER    AS VALUE,
       f.value[15]::FLOAT      AS LATITUDE,
-      f.value[16]::FLOAT      AS LONGITUDE
+      f.value[16]::FLOAT      AS LONGITUDE,
+      TO_GEOGRAPHY('POINT(' || f.value[16]::STRING || ' ' || f.value[15]::STRING || ')') AS LOCATION_POINT
     FROM ELT_PROJECT.GOVDATA.BRONZE_BORDER b,
     LATERAL FLATTEN(input => b.content:"data") f
     WHERE f.value[10] IS NOT NULL
@@ -52,11 +54,13 @@ ON  target.PORT_CODE = source.PORT_CODE
 AND target.MEASURE   = source.MEASURE 
 AND target.DATE_KEY  = source.DATE_KEY
 
--- 1. If the keys match but the VALUE changed (Update)
-WHEN MATCHED AND target.VALUE != source.VALUE THEN
-    UPDATE SET target.VALUE = source.VALUE
+-- Only compare simple types (Strings, Dates, Integers)
+WHEN MATCHED AND (target.VALUE != source.VALUE OR target.PORT_NAME != source.PORT_NAME) THEN
+    UPDATE SET 
+        target.VALUE = source.VALUE,
+        target.LOCATION_POINT = source.LOCATION_POINT
 
--- 2. If the keys don't exist (The 400,001st record)
+-- Insert everything including geography
 WHEN NOT MATCHED THEN
-    INSERT (PORT_NAME, STATE_NAME, PORT_CODE, BORDER_TYPE, DATE_KEY, MEASURE, VALUE, LATITUDE, LONGITUDE)
-    VALUES (source.PORT_NAME, source.STATE_NAME, source.PORT_CODE, source.BORDER_TYPE, source.DATE_KEY, source.MEASURE, source.VALUE, source.LATITUDE, source.LONGITUDE);
+    INSERT (PORT_NAME, STATE_NAME, PORT_CODE, BORDER_TYPE, DATE_KEY, MEASURE, VALUE, LATITUDE, LONGITUDE, LOCATION_POINT)
+    VALUES (source.PORT_NAME, source.STATE_NAME, source.PORT_CODE, source.BORDER_TYPE, source.DATE_KEY, source.MEASURE, source.VALUE, source.LATITUDE, source.LONGITUDE, source.LOCATION_POINT);
